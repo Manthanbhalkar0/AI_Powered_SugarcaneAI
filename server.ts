@@ -61,8 +61,11 @@ function getDbPool(): mysql.Pool | null {
 
 let activePool: mysql.Pool | null = getDbPool();
 
+// Router for all API routes (compatible with local server & Netlify serverless functions)
+const router = express.Router();
+
 // Health & Status endpoint
-app.get('/api/status', async (_req: Request, res: Response) => {
+router.get('/status', async (_req: Request, res: Response) => {
   let dbConnected = false;
   let dbError: string | null = null;
   let farmerCount = 0;
@@ -97,8 +100,8 @@ app.get('/api/status', async (_req: Request, res: Response) => {
   });
 });
 
-// GET /api/farmers
-app.get('/api/farmers', async (req: Request, res: Response) => {
+// GET /farmers
+router.get('/farmers', async (req: Request, res: Response) => {
   const village = typeof req.query.village === 'string' ? req.query.village.trim() : '';
   const hasPending = req.query.has_pending === 'true';
 
@@ -147,8 +150,8 @@ app.get('/api/farmers', async (req: Request, res: Response) => {
   return res.json({ success: true, source: 'sample', data: filtered });
 });
 
-// GET /api/summary
-app.get('/api/summary', async (_req: Request, res: Response) => {
+// GET /summary
+router.get('/summary', async (_req: Request, res: Response) => {
   if (activePool) {
     try {
       const sql = `
@@ -182,8 +185,8 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
   });
 });
 
-// POST /api/chat - Query AI Assistant
-app.post('/api/chat', async (req: Request, res: Response) => {
+// POST /chat - Query AI Assistant
+router.post('/chat', async (req: Request, res: Response) => {
   const question: string = req.body.question || 'Which farmers have pending payments? Show their names, villages, pending amounts, and the total pending payment.';
   const apiKey = process.env.OPENAI_API_KEY || '';
   const modelName = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -223,7 +226,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
         input: question,
         instructions:
           'You are an AI assistant for a Sugarcane Farmer Management System. ' +
-          'Answer user questions accurately using the provided database tools. ' +
+          'Answer user questions accurately by retrieving real data from MySQL using the provided database tools. ' +
           'Format currency in Indian Rupees (₹) with comma separators. Do not invent data.',
         tools: openAiTools,
       });
@@ -276,10 +279,10 @@ app.post('/api/chat', async (req: Request, res: Response) => {
                 const [rows] = await activePool.query<mysql.RowDataPacket[]>('SELECT COUNT(*) as total_farmers, SUM(sugarcane_tonnes) as total_tonnes, SUM(total_amount) as total_payable, SUM(amount_paid) as total_paid, SUM(amount_pending) as total_pending FROM farmers');
                 toolResult = JSON.stringify(rows[0]);
               } catch {
-                toolResult = JSON.stringify({ total_farmers: 10, total_tonnes: 267, total_payable: 854400, total_paid: 559800, total_pending: 294600 });
+                toolResult = JSON.stringify({ total_farmers: 10, total_tonnes: 265.5, total_payable: 849600, total_paid: 555000, total_pending: 294600 });
               }
             } else {
-              toolResult = JSON.stringify({ total_farmers: 10, total_tonnes: 267, total_payable: 854400, total_paid: 559800, total_pending: 294600 });
+              toolResult = JSON.stringify({ total_farmers: 10, total_tonnes: 265.5, total_payable: 849600, total_paid: 555000, total_pending: 294600 });
             }
           }
 
@@ -317,12 +320,11 @@ app.post('/api/chat', async (req: Request, res: Response) => {
       });
     } catch (aiErr) {
       console.error('[OpenAI Error]:', aiErr);
-      // Fallback response with helpful explanation
       const msg = aiErr instanceof Error ? aiErr.message : String(aiErr);
       return res.json({
         success: false,
         error: msg,
-        answer: `OpenAI API call encountered an error: ${msg}. You can check your API key in Settings or review the live data directly in the dashboard.`,
+        answer: `OpenAI API call encountered an error: ${msg}. You can check your API key in Settings or review live data in the dashboard.`,
         mode: 'error-fallback',
       });
     }
@@ -343,7 +345,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     `The following farmers have pending payments:\n\n` +
     `${formattedList}\n\n` +
     `**Total pending payment across all farmers: ₹${totalPending.toLocaleString('en-IN')}**\n\n` +
-    `*(Note: This answer is computed from database records. To enable live natural-language responses via the OpenAI Responses API, click **Settings** above and paste your OpenAI API key).*`;
+    `*(Note: Computed from database records. To enable live natural-language responses via OpenAI Responses API, click **Settings** above and paste your OpenAI API key).*`;
 
   return res.json({
     success: true,
@@ -353,8 +355,8 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   });
 });
 
-// POST /api/farmers/:id/pay - Record or disburse a payment in real-time
-app.post('/api/farmers/:id/pay', async (req: Request, res: Response) => {
+// POST /farmers/:id/pay - Record or disburse a payment in real-time
+router.post('/farmers/:id/pay', async (req: Request, res: Response) => {
   const paramId = req.params['id'];
   const idStr = Array.isArray(paramId) ? paramId[0] : paramId;
   const id = parseInt(idStr || '0', 10);
@@ -392,8 +394,8 @@ app.post('/api/farmers/:id/pay', async (req: Request, res: Response) => {
   return res.json({ success: true, data: farmer });
 });
 
-// POST /api/farmers - Add new farmer delivery record
-app.post('/api/farmers', async (req: Request, res: Response) => {
+// POST /farmers - Add new farmer delivery record
+router.post('/farmers', async (req: Request, res: Response) => {
   const { farmer_name, village, sugarcane_tonnes, amount_paid } = req.body;
   const tonnes = parseFloat(sugarcane_tonnes || '0');
   const paid = parseFloat(amount_paid || '0');
@@ -436,8 +438,8 @@ app.post('/api/farmers', async (req: Request, res: Response) => {
   return res.json({ success: true, data: newFarmer });
 });
 
-// GET /api/analytics - Get village distribution, top suppliers, and disbursement progress
-app.get('/api/analytics', async (_req: Request, res: Response) => {
+// GET /analytics - Get village distribution and summary
+router.get('/analytics', async (_req: Request, res: Response) => {
   let list = SAMPLE_FARMERS;
   if (activePool) {
     try {
@@ -481,8 +483,8 @@ app.get('/api/analytics', async (_req: Request, res: Response) => {
   });
 });
 
-// POST /api/settings - Update .env dynamically from the UI
-app.post('/api/settings', async (req: Request, res: Response) => {
+// POST /settings - Update .env dynamically from UI
+router.post('/settings', async (req: Request, res: Response) => {
   const { openaiKey, model, dbUrl } = req.body;
   const envPath = path.resolve(process.cwd(), '.env');
 
@@ -514,7 +516,6 @@ app.post('/api/settings', async (req: Request, res: Response) => {
       } else {
         envContent += `\nDATABASE_URL=${dbUrl.trim()}`;
       }
-      // Re-create MySQL pool
       if (activePool) {
         await activePool.end().catch(() => {});
       }
@@ -529,12 +530,22 @@ app.post('/api/settings', async (req: Request, res: Response) => {
   }
 });
 
-// Start Express Server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('\n================================================================');
-  console.log('🌾 Sugarcane Farmer AI Management System Web Application');
-  console.log('================================================================');
-  console.log(`✓ Direct Local Link:  http://localhost:${PORT}`);
-  console.log(`✓ Network Link:       http://127.0.0.1:${PORT}`);
-  console.log('================================================================\n');
-});
+// Mount router on all path variations for seamless local and serverless Netlify routing
+app.use('/.netlify/functions/api', router);
+app.use('/api', router);
+app.use('/', router);
+
+export default app;
+export { app };
+
+// Start Express Server locally (skipped when running in serverless / Netlify environment)
+if (!process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log('\n================================================================');
+    console.log('🌾 Sugarcane Farmer AI Management System Web Application');
+    console.log('================================================================');
+    console.log(`✓ Direct Local Link:  http://localhost:${PORT}`);
+    console.log(`✓ Network Link:       http://127.0.0.1:${PORT}`);
+    console.log('================================================================\n');
+  });
+}
